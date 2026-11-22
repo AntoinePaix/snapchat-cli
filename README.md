@@ -168,7 +168,6 @@ The pre-commit hooks block `.env` files, `.har` captures and `token.json` files,
 ```
 src/snapchat_cli/   the package (client, parsing, extractors, downloader, CLI)
 tests/              pytest suite + gzipped HTML fixtures
-research/           earlier reverse-engineering notes (Lens Studio gRPC, Android MITM); not part of the package
 ```
 
 Use this tool only for content you are allowed to download, and respect Snapchat's Terms of Service and the rights of the people who posted it.
