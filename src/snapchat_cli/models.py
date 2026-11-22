@@ -46,7 +46,7 @@ class Collection(BaseModel):
     ``"highlights/Moon_Joy_ddf02468"``) to the snaps that belong in it.
     """
 
-    kind: Literal["user", "search", "place"]
+    kind: Literal["user", "search", "place", "nearby"]
     key: str  # username, search query or place id
     folder: str  # output folder, relative to the download root
     url: str

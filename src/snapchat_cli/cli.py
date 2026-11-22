@@ -28,9 +28,12 @@ from snapchat_cli.client import SnapchatClient
 from snapchat_cli.client import SnapchatError
 from snapchat_cli.downloader import DownloadStats
 from snapchat_cli.downloader import download_collection
+from snapchat_cli.extractors import NEARBY_CATEGORIES
+from snapchat_cli.extractors import fetch_nearby
 from snapchat_cli.extractors import fetch_place
 from snapchat_cli.extractors import fetch_search
 from snapchat_cli.extractors import fetch_user
+from snapchat_cli.extractors import grid_points
 from snapchat_cli.extractors import search_usernames
 from snapchat_cli.models import Collection
 from snapchat_cli.proxies import ProxyPool
@@ -38,6 +41,7 @@ from snapchat_cli.proxies import Rotation
 from snapchat_cli.proxies import load_proxy_file
 from snapchat_cli.targets import Kind
 from snapchat_cli.targets import Target
+from snapchat_cli.targets import parse_coordinates
 from snapchat_cli.targets import parse_target
 
 console = Console(stderr=True)
@@ -202,11 +206,35 @@ def _targets(values: list[str], kind: Kind | None) -> list[Target]:
         raise typer.BadParameter(str(exc)) from exc
 
 
-async def _fetch(client: SnapchatClient, target: Target, sub_places: bool) -> Collection:
+@dataclass
+class NearbyParams:
+    categories: list[str]
+    grid: int = 1
+    step_km: float = 1.0
+
+
+async def _fetch(
+    client: SnapchatClient,
+    target: Target,
+    sub_places: bool,
+    nearby: NearbyParams | None = None,
+) -> Collection:
     if target.kind == "user":
         return await fetch_user(client, target.key)
     if target.kind == "search":
         return await fetch_search(client, target.key)
+    if target.kind == "nearby":
+        if nearby is None:
+            raise SnapchatError("Nearby target without nearby parameters")
+        lat, lng = parse_coordinates(target.key)
+        return await fetch_nearby(
+            client,
+            lat,
+            lng,
+            nearby.categories,
+            grid=nearby.grid,
+            step_km=nearby.step_km,
+        )
     return await fetch_place(client, target.key, target.slug, include_sub_places=sub_places)
 
 
@@ -219,6 +247,7 @@ async def _run(
     sub_places: bool = True,
     expand_profiles: bool = False,
     max_profiles: int | None = None,
+    nearby: NearbyParams | None = None,
 ) -> int:
     table = Table(title="Summary", show_lines=False)
     for col in ("Target", "Folder", "Snaps", "New", "Skipped", "Failed"):
@@ -245,7 +274,7 @@ async def _run(
             label = f"{target.kind}:{target.key}"
             try:
                 with console.status(f"Fetching {label}…"):
-                    collection = await _fetch(client, target, sub_places)
+                    collection = await _fetch(client, target, sub_places, nearby)
             except NotFoundError:
                 console.print(f"[red]✗[/] {label}: not found")
                 errors += 1
@@ -414,6 +443,103 @@ def place(
     """Download a place: place details, reviews, hours + snaps posted there (and in sub-places)."""
     opts, pool = _opts(locals())
     _execute(_run(_targets(places, "place"), opts, pool, sub_places=sub_places))
+
+
+def _list_categories(value: bool) -> None:
+    if value:
+        typer.echo("\n".join(NEARBY_CATEGORIES))
+        raise typer.Exit()
+
+
+def _nearby_categories(values: list[str] | None, all_categories: bool) -> list[str]:
+    if all_categories:
+        return list(NEARBY_CATEGORIES)
+    categories = [c.strip().lower() for v in values or [] for c in v.split(",") if c.strip()]
+    if not categories:
+        raise typer.BadParameter(
+            "give at least one --category (or --all-categories; see --list-categories)",
+            param_hint="--category",
+        )
+    unknown = [c for c in categories if c not in NEARBY_CATEGORIES]
+    if unknown:
+        # The list may grow on snapchat.com: warn, the API answers 404 if it really is unknown.
+        console.print(f"[yellow]![/] Not a known category, trying anyway: {', '.join(unknown)}")
+    return list(dict.fromkeys(categories))
+
+
+@app.command(context_settings={"ignore_unknown_options": True})
+def nearby(
+    location: Annotated[
+        str,
+        typer.Argument(
+            metavar="LAT,LNG",
+            help="Center point, e.g. 48.8566,2.3522 (negative values work: -33.8688,151.2093).",
+        ),
+    ],
+    category: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--category",
+            "-k",
+            help="Place category; repeat or comma-separate for several (one API call each).",
+        ),
+    ] = None,
+    all_categories: Annotated[
+        bool,
+        typer.Option("--all-categories", help="Query every known category (45 calls per point)."),
+    ] = False,
+    grid: Annotated[
+        int,
+        typer.Option(
+            "--grid",
+            "-g",
+            min=1,
+            max=15,
+            help="Query a GRIDxGRID square of points around the center (each call returns 20 places max).",
+        ),
+    ] = 1,
+    step: Annotated[
+        float,
+        typer.Option("--step", min=0.05, max=50.0, help="Distance between grid points, in km."),
+    ] = 1.0,
+    list_categories: Annotated[
+        bool,
+        typer.Option(
+            "--list-categories",
+            callback=_list_categories,
+            is_eager=True,
+            help="Show the known categories and exit.",
+        ),
+    ] = False,
+    output: OutputOpt = Path("downloads"),
+    concurrency: ConcurrencyOpt = 8,
+    metadata_only: MetadataOnlyOpt = False,
+    previews: PreviewsOpt = False,
+    overlays: OverlaysOpt = True,
+    raw: RawOpt = False,
+    proxy: ProxyOpt = None,
+    proxy_file: ProxyFileOpt = None,
+    proxy_rotation: ProxyRotationOpt = Rotation.round_robin,
+    proxy_media: ProxyMediaOpt = True,
+    impersonate: ImpersonateOpt = "chrome",
+    locale: LocaleOpt = "en-US",
+    verbose: VerboseOpt = 0,
+) -> None:
+    """Places around a GPS point (+ their recent snaps), by category, via snapchat.com/local."""
+    try:
+        lat, lng = parse_coordinates(location)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="LAT,LNG") from exc
+    categories = _nearby_categories(category, all_categories)
+    opts, pool = _opts(locals())
+    calls = len(grid_points(lat, lng, grid, step)) * len(categories)
+    console.print(
+        f"Searching {len(categories)} category(ies) around {lat},{lng}"
+        + (f" on a {grid}x{grid} grid ({step:g} km step)" if grid > 1 else "")
+        + f": {calls} API call(s)",
+    )
+    params = NearbyParams(categories, grid=grid, step_km=step)
+    _execute(_run([Target("nearby", f"{lat},{lng}")], opts, pool, nearby=params))
 
 
 @app.command()

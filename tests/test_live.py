@@ -6,6 +6,7 @@ import pytest
 
 from snapchat_cli import NotFoundError
 from snapchat_cli import SnapchatClient
+from snapchat_cli import fetch_nearby
 from snapchat_cli import fetch_place
 from snapchat_cli import fetch_search
 from snapchat_cli import fetch_user
@@ -41,3 +42,14 @@ def test_live_not_found():
 
     with pytest.raises(NotFoundError):
         _run(go())
+
+
+def test_live_nearby():
+    async def go():
+        async with SnapchatClient() as client:
+            return await fetch_nearby(client, 48.8566, 2.3522, ["museums", "bars"])
+
+    c = _run(go())
+    assert c.metadata["categories"] == ["museums", "bars"]
+    assert 20 < c.metadata["place_count"] <= 40
+    assert all(p["distance_km"] < 5 for p in c.metadata["places"])  # really around Paris

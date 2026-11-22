@@ -7,12 +7,19 @@ Raw page JSON is validated with the pydantic models in :mod:`snapchat_cli.schema
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import math
+import secrets
 from typing import Any
 from urllib.parse import quote
+from urllib.parse import urlencode
 
 from pydantic import ValidationError
 
 from snapchat_cli.client import BASE_URL
+from snapchat_cli.client import NotFoundError
 from snapchat_cli.client import SnapchatClient
 from snapchat_cli.client import SnapchatError
 from snapchat_cli.models import Collection
@@ -22,6 +29,8 @@ from snapchat_cli.parsing import find_json_value
 from snapchat_cli.parsing import ld_json
 from snapchat_cli.parsing import page_props
 from snapchat_cli.parsing import rsc_payload
+from snapchat_cli.schemas import NearbyQuery
+from snapchat_cli.schemas import NearbyResponse
 from snapchat_cli.schemas import PlacePageProps
 from snapchat_cli.schemas import PlaceSnap
 from snapchat_cli.schemas import SearchSections
@@ -32,6 +41,8 @@ from snapchat_cli.schemas import UserPageProps
 from snapchat_cli.schemas import VideoObject
 from snapchat_cli.schemas import validate
 from snapchat_cli.targets import slugify
+
+log = logging.getLogger(__name__)
 
 _STORY_MEDIA_TYPES: dict[int | None, MediaType] = {0: "image", 1: "video"}
 
@@ -328,3 +339,196 @@ async def fetch_place(
 ) -> Collection:
     html = await client.get_page(place_url(place_id, slug))
     return parse_place(html, place_id, include_sub_places)
+
+
+# --------------------------------------------------------------------------- nearby
+
+# Categories of snapchat.com/local "near me" pages (one per /api/local/near-me call).
+NEARBY_CATEGORIES = (
+    "amusement-parks", "bakeries", "bars", "bbq-restaurants", "beaches",
+    "breakfast-restaurants", "breweries", "brunch", "chicken-wings", "cocktail-bars",
+    "coffee-shops", "dessert-shops", "diners", "donut-shops", "family-activities",
+    "food-trucks", "hookah-bars", "ice-cream-shops", "indian-restaurants",
+    "italian-restaurants", "japanese-restaurants", "juice-bars", "korean-restaurants",
+    "late-night-food", "live-music", "lounges", "mexican-restaurants", "museums",
+    "music-venues", "nightclubs", "nightlife", "outdoor-activities", "pubs",
+    "ramen-restaurants", "restaurants", "seafood-restaurants", "skate-parks", "sports-bars",
+    "steakhouses", "sushi-restaurants", "thai-restaurants", "things-to-do",
+    "tourist-attractions", "vietnamese-restaurants", "wineries",
+)  # fmt: skip
+
+_KM_PER_DEGREE = 111.32
+
+
+def nearby_url(lat: float, lng: float, category: str, locale: str = "en-US") -> str:
+    params = {"category": category, "lat": lat, "lng": lng, "locale": locale}
+    return f"{BASE_URL}/api/local/near-me?{urlencode(params)}"
+
+
+def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle (haversine) distance."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lng2 - lng1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371.0088 * math.asin(math.sqrt(h))
+
+
+def grid_points(
+    lat: float,
+    lng: float,
+    size: int = 1,
+    step_km: float = 1.0,
+) -> list[tuple[float, float]]:
+    """``size`` x ``size`` points centred on (lat, lng), ``step_km`` apart.
+
+    The API returns at most 20 places per call, all very close to the point,
+    so a grid is the only way to cover a wider area.
+    """
+    if size <= 1:
+        return [(lat, lng)]
+    offsets = [(i - (size - 1) / 2) * step_km for i in range(size)]
+    dlat = 1 / _KM_PER_DEGREE
+    dlng = 1 / (_KM_PER_DEGREE * max(math.cos(math.radians(lat)), 1e-6))
+    return [
+        (round(lat + dy * dlat, 6), round((lng + dx * dlng + 180) % 360 - 180, 6))
+        for dy in offsets
+        for dx in offsets
+    ]
+
+
+def _same_query(query: NearbyQuery, lat: float, lng: float, category: str) -> bool:
+    return (
+        query.category == category and abs(query.lat - lat) < 1e-6 and abs(query.lng - lng) < 1e-6
+    )
+
+
+async def fetch_nearby_point(
+    client: SnapchatClient,
+    lat: float,
+    lng: float,
+    category: str,
+    attempts: int = 3,
+) -> NearbyResponse:
+    """One ``/api/local/near-me`` call: up to 20 places of ``category`` around (lat, lng).
+
+    The Google CDN in front of this endpoint caches responses for an hour and
+    sometimes ignores lat/lng/category in its cache key, answering with another
+    query's results. A unique private-use locale tag (``en-US-x-<random>``,
+    still served in English) bypasses it, and the echoed ``query`` is checked.
+    """
+    for _ in range(attempts):
+        locale = f"{client.locale}-x-{secrets.token_hex(4)}"
+        try:
+            text = await client.get_page(nearby_url(lat, lng, category, locale))
+        except NotFoundError as exc:
+            raise SnapchatError(
+                f"Unknown nearby category {category!r} (see 'snapchat nearby --list-categories')",
+            ) from exc
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SnapchatError(f"Nearby API did not return JSON for {category!r}") from exc
+        response = validate(NearbyResponse, data, "nearby results")
+        if _same_query(response.query, lat, lng, category):
+            return response
+        log.info(
+            "Stale cached nearby response (asked %s,%s %s, got %s), retrying",
+            lat,
+            lng,
+            category,
+            response.query.dump(),
+        )
+    raise SnapchatError(
+        f"Nearby API kept returning cached results for another query ({category!r})",
+    )
+
+
+def parse_nearby(
+    lat: float,
+    lng: float,
+    responses: list[tuple[str, NearbyResponse]],
+    *,
+    grid: int = 1,
+    step_km: float = 1.0,
+) -> Collection:
+    """Merge (category, response) pairs: places deduplicated, sorted by distance."""
+    categories = list(dict.fromkeys(category for category, _ in responses))
+    places: dict[str, dict[str, Any]] = {}
+    snaps: dict[str, dict[str, Snap]] = {}
+    for category, response in responses:
+        for place in response.places:
+            entry = places.get(place.place_id)
+            if entry is None:
+                loc = place.location
+                entry = places[place.place_id] = {
+                    **place.dump(),
+                    "distance_km": round(distance_km(lat, lng, loc.lat, loc.lng), 3)
+                    if loc
+                    else None,
+                    "categories": [],
+                }
+            if category not in entry["categories"]:
+                entry["categories"].append(category)
+        for place_id, items in response.stories_by_place_id.items():
+            bucket = snaps.setdefault(place_id, {})
+            for snap in _place_snaps(items):
+                bucket.setdefault(snap.id or snap.media_url, snap)
+
+    ordered = sorted(
+        places.values(),
+        key=lambda p: (p["distance_km"] is None, p["distance_km"] or 0),
+    )
+    groups: dict[str, list[Snap]] = {}
+    for place in ordered:
+        place_snaps = list(snaps.get(place["place_id"], {}).values())
+        place["snap_count"] = len(place_snaps)
+        if place_snaps:
+            name = place.get("place_name") or place["place_id"]
+            groups[f"{slugify(name)}_{place['place_id'][:8]}"] = place_snaps
+
+    metadata = {
+        "center": {"lat": lat, "lng": lng},
+        "categories": categories,
+        "grid": {
+            "size": grid,
+            "step_km": step_km,
+            "points": len(grid_points(lat, lng, grid, step_km)),
+        },
+        "place_count": len(ordered),
+        "places": ordered,
+    }
+    return Collection(
+        kind="nearby",
+        key=f"{lat},{lng}",
+        folder=f"nearby/{lat:.4f}_{lng:.4f}",
+        url=nearby_url(lat, lng, categories[0] if categories else "things-to-do"),
+        metadata=metadata,
+        groups=groups,
+        raw={"responses": [{"category": c, **r.dump()} for c, r in responses]},
+    )
+
+
+async def fetch_nearby(
+    client: SnapchatClient,
+    lat: float,
+    lng: float,
+    categories: list[str],
+    *,
+    grid: int = 1,
+    step_km: float = 1.0,
+    concurrency: int = 4,
+) -> Collection:
+    """Places (+ their recent snaps) around a point, for each category and grid point."""
+    if not categories:
+        raise SnapchatError("At least one nearby category is required")
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(point: tuple[float, float], category: str) -> tuple[str, NearbyResponse]:
+        async with sem:
+            return category, await fetch_nearby_point(client, point[0], point[1], category)
+
+    tasks = [
+        one(point, cat) for point in grid_points(lat, lng, grid, step_km) for cat in categories
+    ]
+    responses = await asyncio.gather(*tasks)
+    return parse_nearby(lat, lng, list(responses), grid=grid, step_km=step_km)

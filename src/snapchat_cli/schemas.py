@@ -234,3 +234,51 @@ class VideoObject(Model):
     keywords: List[str] = []
     width: int | None = None
     height: int | None = None
+
+
+# --------------------------------------------------------------------------- nearby (local API)
+
+
+class SnakeModel(BaseModel):
+    """For the /api/local endpoints, whose JSON keys are already snake_case."""
+
+    model_config = ConfigDict(extra="allow")
+
+    def dump(self) -> dict[str, Any]:
+        # by_alias: nested camelCase models (PlaceSnap) keep their original keys.
+        return self.model_dump(mode="json", by_alias=True)
+
+
+class LatLng(SnakeModel):
+    lat: float
+    lng: float
+
+
+class NearbyPlace(SnakeModel):
+    place_id: str
+    place_name: str | None = None
+    category_display: str | None = None
+    place_url: str | None = None
+    location: LatLng | None = None
+    address: str | None = None
+
+
+class NearbyQuery(SnakeModel):
+    lat: float
+    lng: float
+    category: str
+
+
+class NearbyCategory(SnakeModel):
+    slug: str | None = None
+    display_name: str | None = None
+
+
+class NearbyResponse(SnakeModel):
+    """``GET /api/local/near-me?category=&lat=&lng=&locale=`` (20 places max)."""
+
+    query: NearbyQuery
+    category: NearbyCategory | None = None
+    places: List[NearbyPlace] = []
+    # Stories use the same camelCase shape as the place pages.
+    stories_by_place_id: Dict[List[PlaceSnap]] = {}

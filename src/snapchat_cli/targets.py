@@ -9,7 +9,7 @@ from typing import Literal
 from urllib.parse import unquote
 from urllib.parse import urlparse
 
-Kind = Literal["user", "search", "place"]
+Kind = Literal["user", "search", "place", "nearby"]
 
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -89,3 +89,19 @@ def slugify(text: str, max_len: int = 60) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"[^\w.-]+", "_", text, flags=re.UNICODE).strip("._")
     return text[:max_len] or "untitled"
+
+
+_COORDS_RE = re.compile(r"^\s*([-+]?\d+(?:\.\d+)?)\s*[,;\s]\s*([-+]?\d+(?:\.\d+)?)\s*$")
+
+
+def parse_coordinates(value: str) -> tuple[float, float]:
+    """``"48.8566,2.3522"`` (comma, semicolon or space separated) -> ``(lat, lng)``."""
+    match = _COORDS_RE.match(value)
+    if not match:
+        raise ValueError(f"Expected 'LAT,LNG' (e.g. 48.8566,2.3522), got: {value!r}")
+    lat, lng = float(match.group(1)), float(match.group(2))
+    if not -90 <= lat <= 90:
+        raise ValueError(f"Latitude out of range [-90, 90]: {lat}")
+    if not -180 <= lng <= 180:
+        raise ValueError(f"Longitude out of range [-180, 180]: {lng}")
+    return lat, lng

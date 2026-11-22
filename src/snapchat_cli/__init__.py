@@ -3,6 +3,7 @@
 from snapchat_cli.client import NotFoundError
 from snapchat_cli.client import SnapchatClient
 from snapchat_cli.client import SnapchatError
+from snapchat_cli.extractors import fetch_nearby
 from snapchat_cli.extractors import fetch_place
 from snapchat_cli.extractors import fetch_search
 from snapchat_cli.extractors import fetch_user
@@ -21,6 +22,7 @@ __all__ = [
     "Snap",
     "SnapchatClient",
     "SnapchatError",
+    "fetch_nearby",
     "fetch_place",
     "fetch_search",
     "fetch_user",

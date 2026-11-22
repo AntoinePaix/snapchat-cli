@@ -28,6 +28,12 @@ snapchat search "disney land" --profiles --max-profiles 5   # also download the 
 snapchat place https://www.snapchat.com/place/disney-california-adventure-park/b0fe0fce-9994-11e8-9ce9-bf074d92c723
 snapchat place b0fe0fce-9994-11e8-9ce9-bf074d92c723 --no-sub-places
 
+# Nearby: places around a GPS point, plus their recent snaps, by category
+snapchat nearby 48.8566,2.3522 -k restaurants
+snapchat nearby -33.8688,151.2093 -k bars,museums -k coffee-shops   # several categories
+snapchat nearby 40.7128,-74.006 -k things-to-do --grid 3 --step 1    # 3x3 points, 1 km apart
+snapchat nearby --list-categories
+
 # Any mix of URLs: the page type is detected for you
 snapchat get https://www.snapchat.com/@nasa https://www.snapchat.com/explore/disney
 ```
@@ -51,6 +57,16 @@ Options shared by every command:
 | `-v` / `-vv` | | Info or debug logging |
 
 Files that are already downloaded are skipped, so running a command again only fetches new snaps.
+
+## Nearby places
+
+`snapchat nearby LAT,LNG` asks the API behind snapchat.com's "near me" pages for places around a point.
+
+- **Categories**: the API takes one category per call, so the command makes one call per category and merges the results. Give several with `-k` repeated or comma-separated, or use `--all-categories` (45 calls). `--list-categories` shows them all: `restaurants`, `bars`, `coffee-shops`, `museums`, `tourist-attractions`, `things-to-do`, `nightclubs`…
+- **Results**: each call returns at most 20 places, the closest to the point (usually within 1–2 km), with up to 5 recent snaps per place. There is no radius or paging.
+- **Wider areas**: to cover more ground, `--grid N --step KM` queries an N×N square of points centred on the location. That is N×N×categories calls, and places found more than once are merged.
+- **Output**: `manifest.json` lists every place with its distance in km, the categories it matched, its address, rating, opening hours and snap count, sorted by distance. Snaps go in one folder per place.
+- **Caching**: the endpoint sits behind a CDN cache that sometimes answers with another query's results. The client sends a unique locale tag on each call (`en-US-x-<random>`, still answered in English), checks that the response matches the request, and retries otherwise.
 
 ## Proxies
 
@@ -83,10 +99,13 @@ downloads/
 ├── search/disney/
 │   ├── manifest.json                     # results by kind: spotlight, profiles, lenses, places...
 │   └── spotlight/<date>_<snapId>.mp4
-└── place/Disney_California_Adventure_b0fe0fce/
-    ├── manifest.json                     # place profile, hours, ratings, reviews, sub-places
-    ├── snaps/...
-    └── sub_places/<name>_<id>/...
+├── place/Disney_California_Adventure_b0fe0fce/
+│   ├── manifest.json                     # place profile, hours, ratings, reviews, sub-places
+│   ├── snaps/...
+│   └── sub_places/<name>_<id>/...
+└── nearby/48.8566_2.3522/
+    ├── manifest.json                     # places sorted by distance, categories, grid
+    └── <place name>_<id>/<date>_<snapId>.mp4
 ```
 
 File names start with the UTC post date, so they sort in date order. Each snap in `manifest.json` records its source URLs, author, timestamp, extra stats (views, likes and so on, when the page has them) and the local `file` it was saved to.
@@ -120,6 +139,7 @@ To use proxies from code, pass them to the client: `SnapchatClient(proxies=["soc
 | `/@user` | Next.js Pages Router | `__NEXT_DATA__` → `userProfile`, `story`, `curatedHighlights`, `spotlightHighlights` |
 | `/place/<slug>/<id>` | Pages Router | `__NEXT_DATA__` → `placeProfile`, `storythumbnailData`, `componentThumbnailData` |
 | `/explore/<query>` | App Router (RSC) | `self.__next_f` stream → `sections[]`, plus schema.org `VideoObject` JSON-LD |
+| `/api/local/near-me` | JSON API | `?category=&lat=&lng=&locale=` → `places[]`, `stories_by_place_id` |
 
 Pydantic models in `src/snapchat_cli/schemas.py` validate the raw page JSON. They map camelCase keys to snake_case, unwrap Snapchat's `{"value": x}` wrappers and keep unknown fields. `src/snapchat_cli/extractors.py` turns the validated data into `Snap` and `Collection` objects through pure `parse_*` functions, which are tested offline against saved pages in `tests/fixtures/`. If snapchat.com changes its data, you get a clear "layout changed?" error instead of a `KeyError`. To fix it, refresh the fixtures and adjust the schemas. Media and JSON files are written with `aiofiles`.
 
