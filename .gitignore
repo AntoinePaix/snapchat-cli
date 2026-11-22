@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+
+# Downloads
+downloads/
+*.part
+
+# Earlier reverse-engineering work (large binaries, tokens, captures)
+research/
