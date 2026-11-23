@@ -11,7 +11,7 @@ import logging
 import random
 import time
 from collections.abc import Iterable
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import quote
 from urllib.parse import urlsplit
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 SCHEMES = ("http", "https", "socks4", "socks4a", "socks5", "socks5h")
 
 
-class Rotation(str, Enum):
+class Rotation(StrEnum):
     round_robin = "round-robin"  # next proxy on every request
     random = "random"  # random proxy on every request
     sticky = "sticky"  # keep the first healthy proxy until it fails

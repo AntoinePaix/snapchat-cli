@@ -24,9 +24,7 @@ def test_parse_user(user_html):
     highlights = [g for g in c.groups if g.startswith("highlights/")]
     assert len(highlights) == len(c.metadata["highlights"]) == 10
     assert len(c.groups["highlights/Moon_Joy_ddf02468"]) == 9
-    assert {
-        s.media_type for s in c.groups["highlights/Artemis_Wallpaper_for_Your_Phone_264684ee"]
-    } == {"image"}
+    assert {s.media_type for s in c.groups["highlights/Artemis_Wallpaper_for_Your_Phone_264684ee"]} == {"image"}
     assert len(c.groups["spotlight"]) == 7
     assert c.snap_count == 63
     assert len(c.metadata["lenses"]) == 3

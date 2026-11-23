@@ -1,5 +1,7 @@
 """Download public snaps and metadata from the snapchat.com web application."""
 
+from importlib.metadata import version
+
 from snapchat_cli.client import NotFoundError
 from snapchat_cli.client import SnapchatClient
 from snapchat_cli.client import SnapchatError
@@ -12,7 +14,7 @@ from snapchat_cli.models import Snap
 from snapchat_cli.proxies import ProxyPool
 from snapchat_cli.proxies import Rotation
 
-__version__ = "0.1.0"
+__version__ = version("snapchat-cli")
 
 __all__ = [
     "Collection",
@@ -22,6 +24,7 @@ __all__ = [
     "Snap",
     "SnapchatClient",
     "SnapchatError",
+    "__version__",
     "fetch_nearby",
     "fetch_place",
     "fetch_search",

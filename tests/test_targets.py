@@ -49,8 +49,7 @@ def test_invalid(value, kind):
 def test_slugify():
     assert slugify("#baking") == "baking"
     assert (
-        slugify("The Little Mermaid - Ariel's Undersea Adventure")
-        == "The_Little_Mermaid_-_Ariel_s_Undersea_Adventure"
+        slugify("The Little Mermaid - Ariel's Undersea Adventure") == "The_Little_Mermaid_-_Ariel_s_Undersea_Adventure"
     )
     assert slugify("ديزني") == "ديزني"
     assert slugify("///") == "untitled"

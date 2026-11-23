@@ -1,4 +1,4 @@
-"""Live smoke tests against snapchat.com. Skip with: pytest -m "not network"."""
+"""Live smoke tests against snapchat.com, deselected by default: run them with `pytest -m live`."""
 
 import asyncio
 
@@ -11,7 +11,7 @@ from snapchat_cli import fetch_place
 from snapchat_cli import fetch_search
 from snapchat_cli import fetch_user
 
-pytestmark = pytest.mark.network
+pytestmark = pytest.mark.live
 
 
 def _run(coro):

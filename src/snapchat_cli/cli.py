@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import logging
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from functools import partial
 from pathlib import Path
 from typing import Annotated
@@ -53,7 +53,7 @@ app = typer.Typer(
 )
 
 
-class UserSection(str, Enum):
+class UserSection(StrEnum):
     story = "story"
     highlights = "highlights"
     spotlight = "spotlight"
@@ -153,7 +153,21 @@ LocaleOpt = Annotated[
     str,
     typer.Option("--locale", help="Accept-Language for page text.", rich_help_panel="Network"),
 ]
-VerboseOpt = Annotated[int, typer.Option("--verbose", "-v", count=True, help="-v info, -vv debug.")]
+TimeoutOpt = Annotated[
+    float,
+    typer.Option("--timeout", min=1, help="Timeout of each request, in seconds.", rich_help_panel="Network"),
+]
+RetriesOpt = Annotated[
+    int,
+    typer.Option(
+        "--retries",
+        min=0,
+        help="Retries per request on network errors or 429/5xx.",
+        rich_help_panel="Network",
+    ),
+]
+VerboseOpt = Annotated[int, typer.Option("--verbose", "-v", count=True, help="Show debug logs.")]
+QuietOpt = Annotated[bool, typer.Option("--quiet", "-q", help="Only show warnings and errors.")]
 
 
 @dataclass
@@ -170,6 +184,8 @@ class Options:
     proxy_media: bool
     impersonate: str
     locale: str
+    timeout: float
+    retries: int
 
     def proxy_pool(self) -> ProxyPool:
         """Proxies from --proxy and --proxy-file, validated (raises typer.BadParameter)."""
@@ -182,19 +198,20 @@ class Options:
             raise typer.BadParameter(str(exc), param_hint="--proxy/--proxy-file") from exc
 
 
-def _setup_logging(verbose: int) -> None:
-    level = logging.WARNING if verbose == 0 else logging.INFO if verbose == 1 else logging.DEBUG
+def _setup_logging(verbose: int, quiet: bool) -> None:
+    level = logging.WARNING if quiet else logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
-        level=level,
+        level=logging.WARNING,
         format="%(message)s",
         handlers=[RichHandler(console=console, show_path=False)],
         force=True,
     )
+    logging.getLogger("snapchat_cli").setLevel(level)
 
 
 def _opts(params: dict[str, Any]) -> tuple[Options, ProxyPool]:
     """Build the shared options from a command's parameters (its ``locals()``)."""
-    _setup_logging(params["verbose"])
+    _setup_logging(params["verbose"], params["quiet"])
     opts = Options(**{f.name: params[f.name] for f in dataclasses.fields(Options)})
     return opts, opts.proxy_pool()
 
@@ -265,6 +282,8 @@ async def _run(
         locale=opts.locale,
         proxies=pool,
         proxy_media=opts.proxy_media,
+        timeout=opts.timeout,
+        retries=opts.retries,
     ) as client:
         while queue:
             target = queue.pop(0)
@@ -286,9 +305,7 @@ async def _run(
 
             if collection.kind == "user" and sections:
                 wanted = tuple(s.value for s in sections)
-                collection.groups = {
-                    g: s for g, s in collection.groups.items() if g.split("/")[0] in wanted
-                }
+                collection.groups = {g: s for g, s in collection.groups.items() if g.split("/")[0] in wanted}
 
             with Progress(
                 TextColumn("[bold]{task.description}"),
@@ -368,7 +385,10 @@ def user(
     proxy_media: ProxyMediaOpt = True,
     impersonate: ImpersonateOpt = "chrome",
     locale: LocaleOpt = "en-US",
+    timeout: TimeoutOpt = 30,
+    retries: RetriesOpt = 3,
     verbose: VerboseOpt = 0,
+    quiet: QuietOpt = False,
 ) -> None:
     """Download a profile: current story, highlights and spotlight snaps + profile metadata."""
     opts, pool = _opts(locals())
@@ -401,7 +421,10 @@ def search(
     proxy_media: ProxyMediaOpt = True,
     impersonate: ImpersonateOpt = "chrome",
     locale: LocaleOpt = "en-US",
+    timeout: TimeoutOpt = 30,
+    retries: RetriesOpt = 3,
     verbose: VerboseOpt = 0,
+    quiet: QuietOpt = False,
 ) -> None:
     """Search (explore page): spotlight videos + profiles, lenses, places, shows metadata."""
     opts, pool = _opts(locals())
@@ -438,7 +461,10 @@ def place(
     proxy_media: ProxyMediaOpt = True,
     impersonate: ImpersonateOpt = "chrome",
     locale: LocaleOpt = "en-US",
+    timeout: TimeoutOpt = 30,
+    retries: RetriesOpt = 3,
     verbose: VerboseOpt = 0,
+    quiet: QuietOpt = False,
 ) -> None:
     """Download a place: place details, reviews, hours + snaps posted there (and in sub-places)."""
     opts, pool = _opts(locals())
@@ -523,7 +549,10 @@ def nearby(
     proxy_media: ProxyMediaOpt = True,
     impersonate: ImpersonateOpt = "chrome",
     locale: LocaleOpt = "en-US",
+    timeout: TimeoutOpt = 30,
+    retries: RetriesOpt = 3,
     verbose: VerboseOpt = 0,
+    quiet: QuietOpt = False,
 ) -> None:
     """Places around a GPS point (+ their recent snaps), by category, via snapchat.com/local."""
     try:
@@ -560,7 +589,10 @@ def get(
     proxy_media: ProxyMediaOpt = True,
     impersonate: ImpersonateOpt = "chrome",
     locale: LocaleOpt = "en-US",
+    timeout: TimeoutOpt = 30,
+    retries: RetriesOpt = 3,
     verbose: VerboseOpt = 0,
+    quiet: QuietOpt = False,
 ) -> None:
     """Download from snapchat.com URLs, detecting the page type automatically."""
     opts, pool = _opts(locals())

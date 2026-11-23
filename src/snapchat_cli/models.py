@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC
 from datetime import datetime
-from datetime import timezone
 from typing import Any
 from typing import Literal
 
@@ -34,7 +34,7 @@ class Snap(BaseModel):
         """Stable file name (without extension), sortable by date."""
         ident = self.id or hashlib.sha1(self.media_url.encode()).hexdigest()[:16]
         if self.timestamp:
-            date = datetime.fromtimestamp(self.timestamp, tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+            date = datetime.fromtimestamp(self.timestamp, tz=UTC).strftime("%Y%m%d_%H%M%S")
             return f"{date}_{ident}"
         return ident
 
@@ -63,10 +63,7 @@ class Collection(BaseModel):
             "kind": self.kind,
             "key": self.key,
             "url": self.url,
-            "fetched_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            "fetched_at": datetime.now(tz=UTC).isoformat(timespec="seconds"),
             "metadata": self.metadata,
-            "snaps": {
-                name: [s.model_dump(mode="json") for s in snaps]
-                for name, snaps in self.groups.items()
-            },
+            "snaps": {name: [s.model_dump(mode="json") for s in snaps] for name, snaps in self.groups.items()},
         }

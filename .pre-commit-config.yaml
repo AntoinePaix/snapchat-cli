@@ -1,4 +1,7 @@
-# Install once with `pre-commit install`; run on everything with `pre-commit run --all-files`.
+# Same hooks in every repo. Install once with `uv run pre-commit install`;
+# run on everything with `uv run pre-commit run --all-files` (the CI does the same).
+exclude: ^tests/fixtures/
+
 repos:
   - repo: local
     hooks:
@@ -17,16 +20,23 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      - id: detect-private-key
       - id: check-added-large-files
-        args: [--maxkb=1024]  # downloaded snaps, page captures
+        args: [--maxkb=1024]
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.6  # keep in sync with the ruff version installed in .venv
+    rev: v0.17.6
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.12.18
+    hooks:
+      - id: uv-lock

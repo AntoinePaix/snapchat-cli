@@ -298,11 +298,7 @@ def parse_place(html: str, place_id: str, include_sub_places: bool = True) -> Co
         for component in props.place_components
         for sub in component.places_info
     ]
-    names = {
-        sub.place_id: sub.place_name or sub.place_id
-        for c in props.place_components
-        for sub in c.places_info
-    }
+    names = {sub.place_id: sub.place_name or sub.place_id for c in props.place_components for sub in c.places_info}
 
     groups: dict[str, list[Snap]] = {}
     snaps = _place_snaps(props.story_thumbnail_data)
@@ -390,16 +386,12 @@ def grid_points(
     dlat = 1 / _KM_PER_DEGREE
     dlng = 1 / (_KM_PER_DEGREE * max(math.cos(math.radians(lat)), 1e-6))
     return [
-        (round(lat + dy * dlat, 6), round((lng + dx * dlng + 180) % 360 - 180, 6))
-        for dy in offsets
-        for dx in offsets
+        (round(lat + dy * dlat, 6), round((lng + dx * dlng + 180) % 360 - 180, 6)) for dy in offsets for dx in offsets
     ]
 
 
 def _same_query(query: NearbyQuery, lat: float, lng: float, category: str) -> bool:
-    return (
-        query.category == category and abs(query.lat - lat) < 1e-6 and abs(query.lng - lng) < 1e-6
-    )
+    return query.category == category and abs(query.lat - lat) < 1e-6 and abs(query.lng - lng) < 1e-6
 
 
 async def fetch_nearby_point(
@@ -462,9 +454,7 @@ def parse_nearby(
                 loc = place.location
                 entry = places[place.place_id] = {
                     **place.dump(),
-                    "distance_km": round(distance_km(lat, lng, loc.lat, loc.lng), 3)
-                    if loc
-                    else None,
+                    "distance_km": round(distance_km(lat, lng, loc.lat, loc.lng), 3) if loc else None,
                     "categories": [],
                 }
             if category not in entry["categories"]:
@@ -527,8 +517,6 @@ async def fetch_nearby(
         async with sem:
             return category, await fetch_nearby_point(client, point[0], point[1], category)
 
-    tasks = [
-        one(point, cat) for point in grid_points(lat, lng, grid, step_km) for cat in categories
-    ]
+    tasks = [one(point, cat) for point in grid_points(lat, lng, grid, step_km) for cat in categories]
     responses = await asyncio.gather(*tasks)
     return parse_nearby(lat, lng, list(responses), grid=grid, step_km=step_km)
